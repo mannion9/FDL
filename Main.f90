@@ -1,4 +1,3 @@
-
 ! 3) Try the different characteristic speeds, those used in q, and dt
 ! 5) Check shock tube initial condtion
 
@@ -7,15 +6,15 @@ implicit none
 real,parameter    :: gamma    = 1.4 ,&
 					 Courant  = .9  ,&
 					 length   = 1.  ,&
-					 tmax     = .2 ,&
+					 tmax     = 2. ,&
 					 qo       = 2.  ,&
 					 delta    = 1.e-30 ,&
-					 uL       = 1.e-30 ,&      !(uL=.5 for piston , uL=.0 for shock tube)
+					 uL       = .5 ,&      !(uL=.5 for piston , uL=.0 for shock tube)
 					 uR       = 1.e-30  	 !(uR=.0 for piston , uR=.0 for shock tube)
-integer,parameter :: jmax 	  = 1000  ,& ! number of cells
+integer,parameter :: jmax 	  = 100  ,& ! number of cells
 					 itterMax = 200  ,& ! Maximum itterations
-					 writeStep= 1    ,& ! Itter step to write to file
-					 IC       = 2       ! Initial condiiton (1-pisition,2 Shock)
+					 writeStep= 10    ,& ! Itter step to write to file
+					 IC       = 1       ! Initial condiiton (1-pisition,2 Shock)
 end module
 
 program main 
@@ -36,9 +35,10 @@ r   = .5*(x(0:jmax+1)+x(-1:jmax))         			! Cell centers
 call Initialcondition(rho,e,p,c,q,u,dm,dx,x)
 i = 0
 do while (time.LT.tmax.AND.i.LT.itterMax)
+	call Boundary(u)
 	call Timestep(u,dx,dt,c)
-	call Output(rho,e,p,u,dm,time,x,r,i,1)
-	call Boundary(u,x,dt)
+	call Output(rho,e,p,u,dm,time,x,r,i)
+	x(-1)  = x(-1) + dt*u(-1)
 	do j=0,jmax  
 		dmi    = .5*(rho(j+1)+rho(j))*(r(j+1)-r(j))    ! Mass in "momentum zone" of cell interface of j and j+1 cell
 		x(j)   = x(j) + u(j)*dt
@@ -52,11 +52,11 @@ do while (time.LT.tmax.AND.i.LT.itterMax)
 			!c(j)   = sqrt(gamma*p(j)/rho(j))
 			!q(j) = qo*c(j)*rho(j)*(uT(j-1)-uT(j))
 			! NonLinear
-			!q(j) = qo*rho(j)*(uT(j-1)-uT(j))**(2)
+			q(j) = qo*rho(j)*(uT(j-1)-uT(j))**(2)
 			! Combo
-			c(j)   = sqrt(gamma*p(j)/rho(j))
-			q(j) = (qo/10)*c(j)*rho(j)*(uT(j-1)-uT(j))
-			q(j) = q(j)+qo*rho(j)*(uT(j-1)-uT(j))**(2)
+			!c(j)   = sqrt(gamma*p(j)/rho(j))
+			!q(j) = (qo/10)*c(j)*rho(j)*(uT(j-1)-uT(j))
+			!q(j) = q(j)+qo*rho(j)*(uT(j-1)-uT(j))**(2)
 		else 
 			q(j) = .0
 		end if 
@@ -75,11 +75,10 @@ print*,i
 call CloseFiles()
 end program
 
-subroutine Boundary(u,x,dt)
+subroutine Boundary(u)
 use Constants
 implicit none
-real,intent(inout),dimension(-1:jmax+1) :: u,x
-real,intent(in) :: dt
+real,intent(inout),dimension(-1:jmax+1) :: u
 if (IC.EQ.1) then
 	u(-1)     = uL ! Left cell must move with piston
 	u(jmax+1) = uR ! Right cell must move with right edge
@@ -87,7 +86,6 @@ else if (IC.EQ.2) then
 	u(-1) = u(0)
 	u(jmax+1) = u(jmax)
 end if 
-x(-1)  = x(-1) + dt*u(-1)
 end subroutine
 
 subroutine InitialCondition(rho,e,p,c,q,u,dm,dx,x)
@@ -126,11 +124,11 @@ do i=0,jmax+1
 		!c   = sqrt(gamma*p/rho)
 		!q(i) = qo*c(i)*rho(i)*(u(i-1)-u(i))
 		! Nonlinear
-		!q(i) = qo*rho(i)*(u(i-1)-u(i))**(2)
+		q(i) = qo*rho(i)*(u(i-1)-u(i))**(2)
 		! Combo
-		c   = sqrt(gamma*p/rho)
-		q(i) = (qo/10)*c(i)*rho(i)*ABS(u(i-1)-u(i))
-		q(i) = q(i) + qo*rho(i)*(u(i-1)-u(i))**(2)
+		!c   = sqrt(gamma*p/rho)
+		!q(i) = (qo/10)*c(i)*rho(i)*ABS(u(i-1)-u(i))
+		!q(i) = q(i) + qo*rho(i)*(u(i-1)-u(i))**(2)
 	else 
 		q(i) = .0
 	end if 
@@ -151,12 +149,12 @@ dt = COURANT*MINVAL(dx)/(MAXVAL(ABS(u(-1:jmax))+c))
 dt = MIN(dt,2.*dt_temp)  				   ! Doesnt allow time step to grow too fast
 end subroutine 
 
-subroutine Output(d,e,p,u,dm,time,x,r,itter,writeOut)
+subroutine Output(d,e,p,u,dm,time,x,r,itter)
 use Constants
 implicit none
 real,intent(in),dimension(0:jmax+1)   :: d,e,p,dm,r
 real,intent(in),dimension(-1:jmax+1) :: x,u
-integer,intent(in) :: itter,writeOut
+integer,intent(in) :: itter
 real,intent(in) :: time
 integer :: st,en,choice 
 choice = 0 ! Set choice to 0 to prin out real domain, 1 to print out entire domain (including ghost cells)
@@ -204,5 +202,3 @@ close(8) ! Close dt for my solution
 close(9) ! Close Lagrage cell ceter
 close(10)! Close total mass
 end subroutine
-
-
