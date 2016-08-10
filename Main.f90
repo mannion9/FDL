@@ -5,17 +5,17 @@
 module constants
 implicit none
 real,parameter    :: gamma    = 1.4 ,&
-					 Courant  = .5  ,&
-					 length   = 10.  ,&
-					 tmax     = 10. ,&
-					 qo       = 1  ,&
+					 Courant  = .9  ,&
+					 length   = 1.  ,&
+					 tmax     = .2 ,&
+					 qo       = 2.  ,&
 					 delta    = 1.e-30 ,&
-					 uL       = .5 ,&      !(uL=.5 for piston , uL=.0 for shock tube)
+					 uL       = 1.e-30 ,&      !(uL=.5 for piston , uL=.0 for shock tube)
 					 uR       = 1.e-30  	 !(uR=.0 for piston , uR=.0 for shock tube)
-integer,parameter :: jmax 	  = 100  ,& ! number of cells
-					 itterMax = 1000  ,& ! Maximum itterations
-					 writeStep= 10    ,& ! Itter step to write to file
-					 IC       = 1       ! Initial condiiton (1-pisition,2 Shock)
+integer,parameter :: jmax 	  = 1000  ,& ! number of cells
+					 itterMax = 200  ,& ! Maximum itterations
+					 writeStep= 1    ,& ! Itter step to write to file
+					 IC       = 2       ! Initial condiiton (1-pisition,2 Shock)
 end module
 
 program main 
@@ -24,7 +24,7 @@ implicit none
 real :: dt=0.05 , time=.0  , dmi
 real,dimension(0:jmax+1) :: rho,p,e,q,c,dx,dm,r
 real,dimension(-1:jmax+1) :: u,x,uT
-integer :: i=0 , j
+integer :: i , j
 
 call OpenFiles()
 
@@ -34,31 +34,35 @@ dx  =  x(0:jmax+1)-x(-1:jmax)   					! Spacing of cells
 r   = .5*(x(0:jmax+1)+x(-1:jmax))         			! Cell centers
 ! Initial Conditions
 call Initialcondition(rho,e,p,c,q,u,dm,dx,x)
-
+i = 0
 do while (time.LT.tmax.AND.i.LT.itterMax)
-	call Timestep(u,p,rho,dx,dt,c)
+	call Timestep(u,dx,dt,c)
 	call Output(rho,e,p,u,dm,time,x,r,i,1)
-	u(-1)     = uL ! Left cell must move with piston
-	u(jmax+1) = uR ! Right cell must move with right edge
-	x(-1)  = x(-1) + dt*u(-1)
+	call Boundary(u,x,dt)
 	do j=0,jmax  
 		dmi    = .5*(rho(j+1)+rho(j))*(r(j+1)-r(j))    ! Mass in "momentum zone" of cell interface of j and j+1 cell
 		x(j)   = x(j) + u(j)*dt
-		uT(j)  = u(j) + (dt/dmi)*(p(j)+q(j)-p(j+1)-q(j+1))
+		uT(j)  = u(j) + (dt/dmi)*(p(j)+q(j)-p(j+1)-q(j+1)) ! Update the velocity in a temporary array
 		rho(j) = dm(j)/(x(j)-x(j-1))
 		e(j)   = e(j) + (dt/dm(j))*(q(j)+p(j))*(u(j-1)-u(j))
 		p(j)   = (gamma-1.)*rho(j)*e(j)
-		!!!! CHOOSE A WAVE SPEED 
-		c(j)   = sqrt(gamma*p(j)/rho(j))
-		
-		if (u(j-1)-u(j).GT..0) then
+			
+		if (uT(j-1)-uT(j).GT..0) then  ! If updated cell is compressed add viscous pressure
+			! Linear
+			!c(j)   = sqrt(gamma*p(j)/rho(j))
 			!q(j) = qo*c(j)*rho(j)*(uT(j-1)-uT(j))
-			q(j) = qo*rho(j)*(uT(j-1)-uT(j))**(2)
+			! NonLinear
+			!q(j) = qo*rho(j)*(uT(j-1)-uT(j))**(2)
+			! Combo
+			c(j)   = sqrt(gamma*p(j)/rho(j))
+			q(j) = (qo/10)*c(j)*rho(j)*(uT(j-1)-uT(j))
+			q(j) = q(j)+qo*rho(j)*(uT(j-1)-uT(j))**(2)
 		else 
 			q(j) = .0
 		end if 
+		c(j)   = sqrt(gamma*(p(j)+q(j))/rho(j))
 	end do 
-	u   = uT
+	u   = uT						 ! Update the velocity 
 	r   = .5*(x(0:jmax+1)+x(-1:jmax))! Find new cell centers
 	dx  =  x(0:jmax+1)-x(-1:jmax)   ! Find new cell widths
 	i = i + 1						! Update itteration counter
@@ -67,9 +71,24 @@ do while (time.LT.tmax.AND.i.LT.itterMax)
 		print*,'Negative volume'
 	end if 
 end do 
-
+print*,i
 call CloseFiles()
 end program
+
+subroutine Boundary(u,x,dt)
+use Constants
+implicit none
+real,intent(inout),dimension(-1:jmax+1) :: u,x
+real,intent(in) :: dt
+if (IC.EQ.1) then
+	u(-1)     = uL ! Left cell must move with piston
+	u(jmax+1) = uR ! Right cell must move with right edge
+else if (IC.EQ.2) then
+	u(-1) = u(0)
+	u(jmax+1) = u(jmax)
+end if 
+x(-1)  = x(-1) + dt*u(-1)
+end subroutine
 
 subroutine InitialCondition(rho,e,p,c,q,u,dm,dx,x)
 use Constants
@@ -79,10 +98,8 @@ real,intent(inout),dimension(-1:jmax+1):: u,x
 integer :: i
 if (IC.EQ.1) then
 	rho = 1.
-	p   = 1.
+	p   = delta
 	e   = p/((gamma-1.)*rho)
-	! e   = delta
-	! p   = (gamma-1.)*rho*e
 	u(-1)        = uL     ! Required to be equal to the piston speed on left (moving)
 	u(0:jmax)    = delta
 	u(jmax+1)    = uR ! Required to be equal to the piston speed on right (stationary)
@@ -93,8 +110,8 @@ else if (IC.EQ.2) then
 			p(i)   = 1.
 			u(i)   = delta
 		else 
-			rho(i) = 4.
-			p(i)   = 1.
+			rho(i) = .125
+			p(i)   = .1
 			u(i)   = delta
 		end if 
 	end do 
@@ -102,39 +119,36 @@ else if (IC.EQ.2) then
 	e = p/((gamma-1.)*rho)
 end if 
 
-c   = sqrt(gamma*p/rho)
 
 do i=0,jmax+1
-	if (u(i-1)-u(i).LT..0) then
-	!q(i) = qo*c(i)*rho(i)*(u(i-1)-u(i))
-	q(i) = qo*rho(i)*(u(i-1)-u(i))**(2)
+	if (u(i-1)-u(i).GT..0) then
+		! Linear
+		!c   = sqrt(gamma*p/rho)
+		!q(i) = qo*c(i)*rho(i)*(u(i-1)-u(i))
+		! Nonlinear
+		!q(i) = qo*rho(i)*(u(i-1)-u(i))**(2)
+		! Combo
+		c   = sqrt(gamma*p/rho)
+		q(i) = (qo/10)*c(i)*rho(i)*ABS(u(i-1)-u(i))
+		q(i) = q(i) + qo*rho(i)*(u(i-1)-u(i))**(2)
 	else 
 		q(i) = .0
 	end if 
 end do 
+c   = sqrt(gamma*(p+q)/rho)
 dm  = rho*dx
-	
 end subroutine 
 
-subroutine Timestep(u,p,rho,dx,dt,c)
+subroutine Timestep(u,dx,dt,c)
 use Constants 
 implicit none
 real,intent(inout) :: dt 
 real,intent(in),dimension(-1:jmax+1) :: u
-real,intent(in),dimension(0:jmax+1)  :: dx,p,rho,c
+real,intent(in),dimension(0:jmax+1)  :: dx,c
 real :: dt_temp 
 dt_temp = dt                            ! Previous time step
-
 dt = COURANT*MINVAL(dx)/(MAXVAL(ABS(u(-1:jmax))+c))
-
-! print*,'min dx:',MINVAL(dx)
-! print*,'max v:', MAXVAL(ABS(u(0:jmax+1))+c)
-! print*,'dt:',dt
-! print*,'  '
-
 dt = MIN(dt,2.*dt_temp)  				   ! Doesnt allow time step to grow too fast
-!dt = 0.05
-
 end subroutine 
 
 subroutine Output(d,e,p,u,dm,time,x,r,itter,writeOut)
