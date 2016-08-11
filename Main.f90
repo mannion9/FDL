@@ -2,17 +2,17 @@
 module constants
 implicit none
 real,parameter    :: gamma    = 5./3.,&
-					 Courant  = .5  ,&
+					 Courant  = .5  , &
 					 length   = 1.  ,&
 					 tmax     = 10. ,&
 					 qo       = 5.  ,&  
 					 delta    = 1.e-30 ,&
-					 uL       = 10. ,&      !(uL=.5 for piston , uL=.0 for shock tube)
+					 uL       = 1.e-30 ,&      !(uL=.5 for piston , uL=.0 for shock tube)
 					 uR       = 1.e-30  	 !(uR=.0 for piston , uR=.0 for shock tube)
 integer,parameter :: jmax 	  = 100  ,& ! number of cells
 					 itterMax = 1000  ,& ! Maximum itterations
 					 writeStep= 10    ,& ! Itter step to write to file
-					 IC       = 1       ! Initial condiiton (1-pisition,2 Shock)
+					 IC       = 2       ! Initial condiiton (1-pisition,2 Shock)
 end module
 
 program main 
@@ -28,13 +28,13 @@ call InitDomain(x,dx,r)
 call InitCond(rho,e,p,c,q,u,dm,dx,x)
 
 do while (time.LT.tmax.AND.i.LT.itterMax)
-	call Boundary(u)
-	call Output(rho,e,p,u,dm,time,x,r,i)
-	x(-1)  = x(-1) + dt*u(-1)
+	call Boundary(u) 			! Impose BC on u
+	x(-1)  = x(-1) + dt*u(-1)	! Move left most ghost cell
+	!q = (/(qo*(dm(j)/(x(j)-x(j-1)))*(MIN(0.0,u(j)-u(j-1)))**2,j=0,jmax+1,1)/) ! Artificial viscious pressure
+	q = (/(qo*rho(j)*ABS(MIN(0.0,u(j)-u(j-1)))*(.1*sqrt(gamma*p(j)/rho(j))+ABS(u(j)-u(j-1))),j=0,jmax+1,1)/) ! Artificial viscious pressure
 	do j=0,jmax  
 		x(j)   = x(j) + u(j)*dt
 		dmi    = .5*(rho(j+1)+rho(j))*(r(j+1)-r(j))    ! Mass in "momentum zone" of cell interface of j and j+1 cell
-		q(j) = qo*(dm(j)/(x(j)-x(j-1)))*(MIN(0.0,u(j)-u(j-1)))**2
 		u(j)  = u(j) + (dt/dmi)*(p(j)+q(j)-p(j+1)-q(j+1)) ! Update the velocity in a temporary array
 		rho(j) = dm(j)/(x(j)-x(j-1))
 		e(j)   = e(j) + (dt/dm(j))*(p(j)+q(j))*(u(j-1)-u(j))
@@ -45,6 +45,7 @@ do while (time.LT.tmax.AND.i.LT.itterMax)
 	dx  =  x(0:jmax+1)-x(-1:jmax)   ! Find new cell widths
 	i = i + 1						! Update itteration counter
 	time = time+ dt					! update timer
+	c = SQRT(gamma*p/rho)
 	call Output(rho,e,p,u,dm,time,x,r,i)
 	call Timestep(u,dx,dt,c,i)
 	if (MINVAL(dx).LT..0) then
@@ -109,19 +110,6 @@ else if (IC.EQ.2) then
 	u(-1) = delta
 	e = p/((gamma-1.)*rho)
 end if 
-! Construct viscious pressure 
-do i=0,jmax+1
-	if (u(i-1)-u(i).GT..0) then
-		q(i) = qo*rho(i)*(u(i-1)-u(i))**(2)
-		c(i) = sqrt(gamma*(p(i))/rho(i))
-		!c(i) = sqrt(gamma*p(i)/rho(i)) + uL
-		!q(i)   = qo*rho(i)*c(i)*(u(i-1)-u(i))
-	else 
-		q(i) = .0
-		c(i) = sqrt(gamma*p(i)/rho(i))
-	end if 
-end do 
-
 dm  = rho*dx
 end subroutine 
 
